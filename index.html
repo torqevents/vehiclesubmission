@@ -256,6 +256,15 @@
   ::-webkit-scrollbar-thumb{background:var(--line);}
   :focus-visible{outline:2px solid var(--red); outline-offset:2px;}
 
+/* submission search */
+.sub-search{display:flex;align-items:center;gap:10px;background:var(--bg-panel);border:1px solid var(--line);padding:0 14px;margin-bottom:12px;border-radius:var(--radius)}
+.sub-search:focus-within{border-color:var(--red);box-shadow:0 0 0 3px var(--red-glow)}
+.sub-search svg{color:var(--gray-dim);flex:none}
+.sub-search input[type=search]{flex:1;min-width:0;background:none;border:0;box-shadow:none!important;padding:13px 0;font-size:15px}
+.sub-search input::-webkit-search-cancel-button{display:none;-webkit-appearance:none}
+.sub-search button{background:none;border:0;color:var(--gray);font-size:22px;line-height:1;cursor:pointer;padding:4px}
+.sub-count{font-size:12.5px;color:var(--gray-dim);margin:-4px 0 12px}
+.sub-count a{color:var(--red)}
 /* VIP parking (shared with TORQ Check-In) */
 .pk-badge{display:inline-flex;align-items:center;gap:6px;margin-top:5px;padding:3px 9px;border-radius:999px;font-size:11.5px;font-weight:700;background:color-mix(in srgb,var(--c) 14%,transparent);color:var(--c);border:1px solid color-mix(in srgb,var(--c) 40%,transparent)}
 .pk-badge::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--c)}
@@ -876,7 +885,7 @@ let subFilterEvent = 'all';
 async function AdminDashboard(){
   const [{ data: events }, { data: subs }, { data: team }] = await Promise.all([
     sb.from('events').select('*').order('created_at', {ascending:false}),
-    sb.from('submissions').select('id,event_id,status,full_name,vehicle,email,submitted_at').order('submitted_at', {ascending:false}),
+    sb.from('submissions').select('id,event_id,status,full_name,vehicle,email,phone,plate,social,club_name,submitted_at').order('submitted_at', {ascending:false}),
     currentUser.role==='admin' ? sb.from('team_profiles').select('*').order('created_at') : Promise.resolve({data:[]}),
     loadParking().catch(()=>{})
   ]);
@@ -909,14 +918,27 @@ async function AdminDashboard(){
   `;
 }
 
+let subSearch = '';
+let SUB_ARGS = null;
+function subMatches(s, q){
+  const digits = q.replace(/\D/g,'');
+  const hay = [s.full_name, s.email, s.vehicle, s.plate, s.social, s.club_name, s.id.slice(0,8)].join(' ').toLowerCase();
+  if(q.split(/\s+/).every(w=> hay.includes(w))) return true;
+  return digits.length>=3 && String(s.phone||'').replace(/\D/g,'').includes(digits);
+}
 function SubmissionsTab(events, subs){
+  SUB_ARGS = [events, subs];
   let filtered = subs.slice();
+  const q = subSearch.trim().toLowerCase();
+  if(q) filtered = filtered.filter(s=> subMatches(s, q));
   if(subFilterEvent !== 'all') filtered = filtered.filter(s=>s.event_id===subFilterEvent);
   if(subFilterStatus !== 'all') filtered = filtered.filter(s=>s.status===subFilterStatus);
 
   const eventName = (id)=> (events.find(e=>e.id===id)||{}).name || 'Unknown event';
 
   return `
+    <div class="sub-search"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><input type="search" id="subSearch" placeholder="Search name, email, phone, car, plate or Instagram" value="${escapeAttr(subSearch)}" autocomplete="off">${subSearch?'<button type="button" id="subSearchClear" aria-label="Clear search">×</button>':''}</div>
+    ${q ? `<div class="sub-count">${filtered.length} result${filtered.length===1?'':'s'} for “${escapeHtml(subSearch.trim())}”${subFilterStatus!=='all'?` in ${subFilterStatus} · <a href="#" id="subSearchAll">search all</a>`:''}</div>` : ''}
     <div class="toolbar">
       <div class="filter-pills">
         <button class="pill ${subFilterStatus==='pending'?'active':''}" data-status="pending">Pending</button>
@@ -929,7 +951,7 @@ function SubmissionsTab(events, subs){
         ${events.map(e=>`<option value="${e.id}" ${subFilterEvent===e.id?'selected':''}>${escapeHtml(e.name)}</option>`).join('')}
       </select>
     </div>
-    ${filtered.length===0 ? `<div class="empty-state">No ${subFilterStatus==='all'?'':subFilterStatus} submissions here.</div>` : `
+    ${filtered.length===0 ? `<div class="empty-state">${q ? 'No submissions match your search.' : `No ${subFilterStatus==='all'?'':subFilterStatus} submissions here.`}</div>` : `
     <div class="sub-list">
       ${filtered.map(s=>`
         <div class="sub-row" data-id="${s.id}">
@@ -1032,7 +1054,7 @@ function parkBadge(s){
 async function renderTabContent(){
   const [{ data: events }, { data: subs }, { data: team }] = await Promise.all([
     sb.from('events').select('*').order('created_at', {ascending:false}),
-    sb.from('submissions').select('id,event_id,status,full_name,vehicle,email,submitted_at').order('submitted_at', {ascending:false}),
+    sb.from('submissions').select('id,event_id,status,full_name,vehicle,email,phone,plate,social,club_name,submitted_at').order('submitted_at', {ascending:false}),
     currentUser.role==='admin' ? sb.from('team_profiles').select('*').order('created_at') : Promise.resolve({data:[]}),
     loadParking().catch(()=>{})
   ]);
@@ -1047,6 +1069,18 @@ async function renderTabContent(){
 }
 
 function bindSubmissionsTabEvents(){
+  const si = document.getElementById('subSearch');
+  if(si){
+    si.addEventListener('input', ()=>{
+      subSearch = si.value; const pos = si.selectionStart;
+      const c = document.getElementById('tabContent'); if(!c || !SUB_ARGS) return;
+      c.innerHTML = SubmissionsTab(SUB_ARGS[0], SUB_ARGS[1]); bindSubmissionsTabEvents();
+      const n = document.getElementById('subSearch'); n.focus(); try{ n.setSelectionRange(pos,pos); }catch(e){}
+    });
+    si.addEventListener('keydown', e=>{ if(e.key==='Escape'){ si.value=''; si.dispatchEvent(new Event('input')); } });
+  }
+  document.getElementById('subSearchClear')?.addEventListener('click', ()=>{ subSearch=''; const c=document.getElementById('tabContent'); c.innerHTML = SubmissionsTab(SUB_ARGS[0], SUB_ARGS[1]); bindSubmissionsTabEvents(); document.getElementById('subSearch').focus(); });
+  document.getElementById('subSearchAll')?.addEventListener('click', async e=>{ e.preventDefault(); subFilterStatus='all'; await renderTabContent(); });
   document.querySelectorAll('.pill[data-status]').forEach(p=>{
     p.addEventListener('click', async ()=>{ subFilterStatus = p.dataset.status; await renderTabContent(); });
   });
