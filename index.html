@@ -320,6 +320,27 @@
     if (!sb || !sb.auth || !sb.auth.mfa || sb.__torqMfa) return;
     sb.__torqMfa = true;
     var el = null, busy = false, mode = '';
+    var auth = sb.auth;
+    var getSession0 = auth.getSession.bind(auth);
+    var signIn0 = auth.signInWithPassword.bind(auth);
+    var aalOf = function (s) {
+      try { var p = s.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'); return JSON.parse(atob(p + '==='.slice((p.length + 3) % 4))).aal || null; } catch (e) { return null; }
+    };
+    var hold = function () { setTimeout(check, 0); return new Promise(function () {}); };
+    // The page's own code must not run (team lookups, "not on the team" sign-outs) until the
+    // 6-digit code is entered: hold it here; after a correct code the page reloads at aal2.
+    auth.getSession = async function () {
+      var r = await getSession0();
+      var s = r && r.data && r.data.session;
+      if (s && aalOf(s) !== 'aal2') return hold();
+      return r;
+    };
+    auth.signInWithPassword = async function (c) {
+      var r = await signIn0(c);
+      var s = r && !r.error && r.data && r.data.session;
+      if (s && aalOf(s) !== 'aal2') return hold();
+      return r;
+    };
     var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); };
 
     function mount(html) {
@@ -389,7 +410,7 @@
     async function check() {
       if (busy) return; busy = true;
       try {
-        var s = await sb.auth.getSession();
+        var s = await getSession0();
         var session = s.data && s.data.session;
         if (!session) { close(); return; }
         var a = await sb.auth.mfa.getAuthenticatorAssuranceLevel();
